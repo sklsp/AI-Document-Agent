@@ -1,12 +1,31 @@
 from agent import run_agent
 
-with open('sample_document.txt', 'r') as f:
-    document = f.read()
+def import_document(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return f.read()
 
-while True: 
+document = import_document('data/company_document.txt')
+
+while True:
     question = input('\nAsk something: ')
 
-    if question == 'exit':
+    if question.lower() == 'exit':
         break
 
     print(run_agent(question, document))
+
+answer = run_agent(question, document)
+print({answer})
+
+
+
+# with open('sample_document.txt', 'r') as f:
+#     document = f.read()
+
+# while True: 
+#     question = input('\nAsk something: ')
+
+#     if question == 'exit':
+#         break
+
+#     print(run_agent(question, document))
