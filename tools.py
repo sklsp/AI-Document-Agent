@@ -7,4 +7,4 @@ def find_keywords(document):
 
 def answer_questions(question, document):
     # Placeholder for question-answering logic
-    return f'i dont have AI yet but your question was {question}'
+    return f'i dont have AI yet but your question was: "{question}" '
