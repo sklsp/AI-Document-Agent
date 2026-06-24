@@ -96,6 +96,57 @@ def ask_llm(prompt: str, model: str = "ggml-small", host: str = "http://localhos
     except ValueError:
         return resp.text
 
+    # If server streamed NDJSON or chunked JSON, try to assemble pieces.
+    try:
+        import json as _json
+        assembled = []
+        stream_seen = False
+        # iterate over lines if available
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            try:
+                obj = _json.loads(line)
+            except Exception:
+                # not JSON, skip
+                continue
+
+            # Ollama streaming shape: objects with 'message' or incremental 'choices' deltas
+            if isinstance(obj, dict):
+                # common shape: {"model":..., "message": {"role":"assistant","content": "..."}, "done": false}
+                if "message" in obj and isinstance(obj["message"], dict):
+                    cont = obj["message"].get("content")
+                    if isinstance(cont, str):
+                        assembled.append(cont)
+                        stream_seen = True
+
+                # OpenAI-style streaming: {"choices":[{"delta": {"content": "..."}}], ...}
+                if "choices" in obj and isinstance(obj["choices"], list):
+                    for ch in obj["choices"]:
+                        if isinstance(ch, dict):
+                            delta = ch.get("delta") or {}
+                            if isinstance(delta, dict):
+                                cont = delta.get("content")
+                                if isinstance(cont, str):
+                                    assembled.append(cont)
+                                    stream_seen = True
+                            # fallback: message.content in choices
+                            msg = ch.get("message")
+                            if isinstance(msg, dict):
+                                cont = msg.get("content")
+                                if isinstance(cont, str):
+                                    assembled.append(cont)
+                                    stream_seen = True
+
+                if obj.get("done") is True:
+                    break
+
+        if stream_seen:
+            return "".join(assembled)
+    except Exception:
+        # if streaming parse fails, fall back to JSON parsing above
+        pass
+
     # Common Ollama response shapes: {'response': '...'} or {'result': [...]}
     if isinstance(data, dict):
         if "response" in data and isinstance(data["response"], str):

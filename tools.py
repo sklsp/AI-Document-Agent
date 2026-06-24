@@ -19,7 +19,10 @@ def find_keywords(document: str, max_keywords: int = 10) -> str:
 def answer_questions(question: str, document: str) -> str:
     """Answer `question` using the provided `document` as context via the LLM."""
     prompt = (
-        f"You are a helpful assistant. Use the document below to answer the question. "
-        f"If the answer is not in the document, say 'I don't know'.\n\nDocument:\n{document}\n\nQuestion: {question}\nAnswer:"
+        "You are a helpful assistant. Use ONLY the information in the provided document to answer the question when possible. "
+        "If the document contains the answer, reply concisely and indicate the answer is supported by the document. "
+        "If the document does NOT contain the answer, provide a best-effort speculative answer prefixed with 'Hypothetical:' and clearly state that it is speculative. "
+        "Do not invent citations or pretend the document contained the information.\n\n"
+        f"Document:\n{document}\n\nQuestion: {question}\nAnswer:"
     )
     return ask_llm(prompt)
