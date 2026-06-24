@@ -67,7 +67,8 @@ def ask_llm(prompt: str, model: str = "ggml-small", host: str = "http://localhos
             ep_payload = {"model": model, "prompt": prompt, "stream": stream}
 
         try:
-            resp = requests.post(url, json=ep_payload, timeout=30)
+            # request with streaming enabled so we can handle both chunked/ndjson and regular responses
+            resp = requests.post(url, json=ep_payload, timeout=30, stream=True)
             resp.raise_for_status()
             break
         except requests.RequestException as e:
@@ -90,62 +91,64 @@ def ask_llm(prompt: str, model: str = "ggml-small", host: str = "http://localhos
             msg += f" -- response body: {body}"
         raise RuntimeError(msg)
 
-    # Try to parse Ollama-style JSON responses, but fall back to raw text
+    # Decide whether to treat response as a stream based on headers or explicit flag
+    content_type = resp.headers.get('Content-Type', '').lower()
+    transfer_enc = resp.headers.get('Transfer-Encoding', '').lower()
+    should_stream = stream or 'ndjson' in content_type or 'event-stream' in content_type or 'chunked' in transfer_enc
+
+    # If streaming, iterate lines and assemble pieces
+    if should_stream:
+        try:
+            import json as _json
+            assembled = []
+            stream_seen = False
+            for line in resp.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                try:
+                    obj = _json.loads(line)
+                except Exception:
+                    # not JSON, append raw line
+                    assembled.append(line)
+                    continue
+
+                if isinstance(obj, dict):
+                    if "message" in obj and isinstance(obj["message"], dict):
+                        cont = obj["message"].get("content")
+                        if isinstance(cont, str):
+                            assembled.append(cont)
+                            stream_seen = True
+
+                    if "choices" in obj and isinstance(obj["choices"], list):
+                        for ch in obj["choices"]:
+                            if isinstance(ch, dict):
+                                delta = ch.get("delta") or {}
+                                if isinstance(delta, dict):
+                                    cont = delta.get("content")
+                                    if isinstance(cont, str):
+                                        assembled.append(cont)
+                                        stream_seen = True
+                                msg = ch.get("message")
+                                if isinstance(msg, dict):
+                                    cont = msg.get("content")
+                                    if isinstance(cont, str):
+                                        assembled.append(cont)
+                                        stream_seen = True
+
+                    if obj.get("done") is True:
+                        break
+
+            if assembled:
+                return "".join(assembled)
+        except Exception:
+            # fall through to non-stream parsing
+            pass
+
+    # Non-streaming: try to parse JSON body
     try:
         data = resp.json()
-    except ValueError:
-        return resp.text
-
-    # If server streamed NDJSON or chunked JSON, try to assemble pieces.
-    try:
-        import json as _json
-        assembled = []
-        stream_seen = False
-        # iterate over lines if available
-        for line in resp.iter_lines(decode_unicode=True):
-            if not line:
-                continue
-            try:
-                obj = _json.loads(line)
-            except Exception:
-                # not JSON, skip
-                continue
-
-            # Ollama streaming shape: objects with 'message' or incremental 'choices' deltas
-            if isinstance(obj, dict):
-                # common shape: {"model":..., "message": {"role":"assistant","content": "..."}, "done": false}
-                if "message" in obj and isinstance(obj["message"], dict):
-                    cont = obj["message"].get("content")
-                    if isinstance(cont, str):
-                        assembled.append(cont)
-                        stream_seen = True
-
-                # OpenAI-style streaming: {"choices":[{"delta": {"content": "..."}}], ...}
-                if "choices" in obj and isinstance(obj["choices"], list):
-                    for ch in obj["choices"]:
-                        if isinstance(ch, dict):
-                            delta = ch.get("delta") or {}
-                            if isinstance(delta, dict):
-                                cont = delta.get("content")
-                                if isinstance(cont, str):
-                                    assembled.append(cont)
-                                    stream_seen = True
-                            # fallback: message.content in choices
-                            msg = ch.get("message")
-                            if isinstance(msg, dict):
-                                cont = msg.get("content")
-                                if isinstance(cont, str):
-                                    assembled.append(cont)
-                                    stream_seen = True
-
-                if obj.get("done") is True:
-                    break
-
-        if stream_seen:
-            return "".join(assembled)
     except Exception:
-        # if streaming parse fails, fall back to JSON parsing above
-        pass
+        return resp.text
 
     # Common Ollama response shapes: {'response': '...'} or {'result': [...]}
     if isinstance(data, dict):
