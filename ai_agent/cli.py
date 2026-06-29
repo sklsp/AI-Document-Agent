@@ -49,7 +49,10 @@ def main():
             print('No document loaded. Use "load <path>" or place files in data/')
             continue
 
-        print(run_agent(text, document))
+        try:
+            print(run_agent(text, document))
+        except Exception as exc:
+            print(f'Error: {exc}')
 
 
 if __name__ == '__main__':

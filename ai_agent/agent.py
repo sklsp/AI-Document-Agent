@@ -1,10 +1,7 @@
-from ai_agent.tools import summarize, find_keywords, answer_questions
+from .tools import summarize, find_keywords, answer_questions
 
 
-__all__ = ["run_agent"]
-
-
-def run_agent(question, document):
+def run_agent(question: str, document: str) -> str:
     question = question.lower().strip()
 
     if 'summary' in question:
@@ -13,5 +10,3 @@ def run_agent(question, document):
         return find_keywords(document)
 
     return answer_questions(question, document)
-
-__all__ = ["run_agent"]

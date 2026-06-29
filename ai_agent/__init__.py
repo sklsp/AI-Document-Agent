@@ -1,4 +1,4 @@
-from .core import run_agent
+from .agent import run_agent
 from .llm import ask_llm, list_models
 from .tools import summarize, find_keywords, answer_questions
 
