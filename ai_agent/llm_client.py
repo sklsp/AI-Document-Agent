@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-import requests
+
+try:
+    import requests
+except ImportError:  # pragma: no cover - exercised in minimal environments
+    requests = None
 
 from .config import OLLAMA_BASE_URL
 
@@ -20,7 +24,7 @@ def _build_payload(prompt: str, model: str) -> Dict[str, Any]:
     }
 
 
-def _parse_response(resp: requests.Response) -> str:
+def _parse_response(resp: Any) -> str:
     try:
         data = resp.json()
     except Exception:
@@ -42,6 +46,9 @@ def ask_llm(
     model: str = DEFAULT_MODEL,
     base_url: str | None = None
 ) -> str:
+
+    if requests is None:
+        return "❌ requests package is not installed"
 
     base_url = base_url or OLLAMA_BASE_URL
     url = _format_url(base_url, "/api/generate")
