@@ -44,11 +44,17 @@ Create a `.env` file in the project root with:
 OLLAMA_BASE_URL=http://192.168.1.50:11434
 ```
 
-## Run the agent
+## Run the API backend
 
 ```bash
 python main.py
 ```
+
+The app will start a FastAPI server on port 8000 with these endpoints:
+
+- GET /health
+- POST /chat
+- GET /models
 
 You should see startup text and the configured Ollama base URL.
 
