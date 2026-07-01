@@ -36,11 +36,11 @@ Open **http://localhost:8000** — or use the auto-generated Cloudflare tunnel U
 
 ---
 
-## ✨ Feature Demo
+## Feature Demo
 
 > GIFs live in `images/`. 
 
-### 💬 Basic Chat
+### Basic Chat
 
 Simple conversation with a local LLM — fast, private, and fully offline-capable.
 
@@ -48,7 +48,7 @@ Simple conversation with a local LLM — fast, private, and fully offline-capabl
 
 ---
 
-### 🧠 Session Memory
+### Session Memory
 
 Create new chats and switch between sessions. Conversation history persists per session during runtime.
 
@@ -56,7 +56,7 @@ Create new chats and switch between sessions. Conversation history persists per 
 
 ---
 
-### 📄 Document Q&A (RAG)
+### Document Q&A (RAG)
 
 Upload PDF, DOCX, or TXT files and ask questions about their content. Documents are chunked, embedded, and indexed in FAISS.
 
@@ -64,7 +64,7 @@ Upload PDF, DOCX, or TXT files and ask questions about their content. Documents 
 
 ---
 
-### 🔄 Toggle Document Usage
+### Toggle Document Usage
 
 Enable or disable document context per session. Compare pure LLM answers vs RAG-enhanced responses with one click.
 
@@ -72,7 +72,7 @@ Enable or disable document context per session. Compare pure LLM answers vs RAG-
 
 ---
 
-### 📝 Prompt Library
+### Prompt Library
 
 Create reusable prompt templates and apply them from the chat header. Use `{input}` as a placeholder for the user's message.
 
@@ -80,7 +80,7 @@ Create reusable prompt templates and apply them from the chat header. Use `{inpu
 
 ---
 
-### ✏️ Prompt Management
+### Prompt Management
 
 Edit and delete saved prompts from the library panel. Templates sync via the REST API (`GET/POST/PUT/DELETE /prompts`).
 
