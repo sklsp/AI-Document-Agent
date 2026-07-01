@@ -7,7 +7,7 @@ from app.core.exceptions import OllamaServiceError
 
 
 class OllamaClient:
-    """Small client for talking to the local Ollama HTTP API."""
+    """Client for talking to Ollama HTTP API using OpenAI-compatible endpoints."""
 
     def __init__(self, base_url: str | None = None, timeout: float | None = None) -> None:
         self.base_url = (base_url or settings.ollama_base_url).rstrip("/")
@@ -20,23 +20,51 @@ class OllamaClient:
         except requests.RequestException as exc:
             raise OllamaServiceError("Ollama is unreachable", status_code=503, detail=str(exc)) from exc
 
+        # Convert all client/server errors from Ollama to 502 Bad Gateway
+        # Never return 4xx status codes as that confuses clients about endpoint availability
         if response.status_code == 404:
-            raise OllamaServiceError("Requested Ollama endpoint was not found", status_code=404)
+            raise OllamaServiceError(
+                f"Ollama endpoint not found: {path}",
+                status_code=502,
+                detail=f"The Ollama API endpoint {path} does not exist. Check Ollama version compatibility."
+            )
         if response.status_code >= 500:
             raise OllamaServiceError("Ollama returned a server error", status_code=502)
         if response.status_code >= 400:
-            raise OllamaServiceError("Ollama request failed", status_code=response.status_code)
+            raise OllamaServiceError(f"Ollama request failed with status {response.status_code}", status_code=502)
 
         try:
             return response.json()
         except ValueError as exc:
             raise OllamaServiceError("Ollama returned an invalid response", status_code=502) from exc
 
-    def generate(self, *, model: str, prompt: str) -> dict:
-        return self._request("POST", "/api/generate", json={"model": model, "prompt": prompt, "stream": False})
+    def chat_completion(self, *, model: str, messages: list[dict]) -> dict:
+        """Call OpenAI-compatible chat completion endpoint (Ollama v0.31+)."""
+        return self._request("POST", "/v1/chat/completions", json={
+            "model": model,
+            "messages": messages,
+            "stream": False
+        })
 
     def chat(self, *, model: str, messages: list[dict]) -> dict:
-        return self._request("POST", "/api/chat", json={"model": model, "messages": messages, "stream": False})
+        """Alias for chat_completion for compatibility."""
+        return self.chat_completion(model=model, messages=messages)
+
+    def generate(self, *, model: str, prompt: str) -> dict:
+        """Legacy generate endpoint - converts to chat completion format."""
+        # Use chat completion with system role for simple prompt completion
+        messages = [{"role": "user", "content": prompt}]
+        response = self.chat_completion(model=model, messages=messages)
+        
+        # Convert OpenAI response format to Ollama generate format for compatibility
+        if "choices" in response and response["choices"]:
+            return {
+                "response": response["choices"][0]["message"]["content"],
+                "model": model,
+                "done": True
+            }
+        raise OllamaServiceError("Invalid response from chat completion", status_code=502)
 
     def list_models(self) -> dict:
-        return self._request("GET", "/api/tags")
+        """List available models using OpenAI-compatible endpoint."""
+        return self._request("GET", "/v1/models")
