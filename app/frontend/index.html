@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AI Agent</title>
+  <style>
+    body {
+      font-family: Arial;
+      margin: 0;
+      background: #0f172a;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    #chat {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .msg {
+      padding: 10px 14px;
+      margin: 10px 0;
+      border-radius: 10px;
+      max-width: 70%;
+      white-space: pre-wrap;
+    }
+
+    .user {
+      background: #2563eb;
+      margin-left: auto;
+    }
+
+    .bot {
+      background: #1e293b;
+      margin-right: auto;
+    }
+
+    #inputArea {
+      display: flex;
+      padding: 10px;
+      background: #111827;
+    }
+
+    input {
+      flex: 1;
+      padding: 10px;
+      border-radius: 6px;
+      border: none;
+    }
+
+    button {
+      margin-left: 10px;
+      padding: 10px 16px;
+      border: none;
+      background: #22c55e;
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+
+<div id="chat"></div>
+
+<div id="inputArea">
+  <input id="input" placeholder="Type a message..." />
+  <button onclick="send()">Send</button>
+</div>
+
+<script>
+const chat = document.getElementById("chat");
+
+function addMsg(text, type) {
+  const div = document.createElement("div");
+  div.className = "msg " + type;
+  div.innerText = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function send() {
+  const input = document.getElementById("input");
+  const text = input.value;
+  if (!text) return;
+
+  addMsg(text, "user");
+  input.value = "";
+
+  addMsg("Thinking...", "bot");
+
+  const res = await fetch("http://192.168.178.69:8000/chat", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      prompt: text,
+      model: "llama3.2:3b"
+    })
+  });
+
+  const data = await res.json();
+
+  chat.lastChild.remove(); // remove "Thinking..."
+  addMsg(data.response || JSON.stringify(data), "bot");
+}
+</script>
+
+</body>
+</html>
