@@ -1,5 +1,9 @@
 """API routes for the AI Document Agent."""
 
+import os
+import tempfile
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from app.core.exceptions import OllamaServiceError
@@ -21,6 +25,8 @@ from app.services.document_service import DocumentService
 from app.services.llm_service import LLMService
 from app.services.memory_service import MemoryService
 from app.services.prompt_service import PromptService
+from app.services.rag.ingestion import SUPPORTED_EXTENSIONS, extract_text
+from app.services.rag.service import RAGService
 
 router = APIRouter()
 
@@ -48,6 +54,11 @@ def get_document_service(request: Request) -> DocumentService:
 def get_prompt_service(request: Request) -> PromptService:
     """Get prompt service from app state."""
     return request.app.state.prompt_service
+
+
+def get_rag_service(request: Request) -> RAGService:
+    """Get RAG service from app state."""
+    return request.app.state.rag_service
 
 
 # ============================================
@@ -85,45 +96,66 @@ def chat(
     request: ChatRequest,
     llm_service: LLMService = Depends(get_llm_service),
     memory_service: MemoryService = Depends(get_memory_service),
-    document_service: DocumentService = Depends(get_document_service),
+    rag_service: RAGService = Depends(get_rag_service),
     prompt_service: PromptService = Depends(get_prompt_service),
 ) -> ChatResponse:
     """
     Enhanced chat endpoint with:
     - Session-based conversation history
-    - Document context retrieval
+    - RAG document context retrieval
     - Prompt template integration
     """
     try:
         session_id = request.session_id
-        user_prompt = request.prompt
+        user_message = request.prompt
         model = request.model
 
-        # 1. Retrieve chat history
+        memory_service.set_use_documents(session_id, request.use_documents)
+        use_documents = request.use_documents
+
+        # 1. Apply optional prompt template from library
+        llm_user_prompt = user_message
+        if request.prompt_id:
+            template = prompt_service.get_prompt(request.prompt_id)
+            if template is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Prompt {request.prompt_id} not found",
+                )
+            llm_user_prompt = prompt_service.apply_template(request.prompt_id, user_message)
+
+        # 2. Retrieve chat history
         history_text = memory_service.format_history_for_prompt(session_id)
 
-        # 2. Retrieve relevant document context
-        doc_context = document_service.get_relevant_context(user_prompt)
+        # 3. Optionally retrieve document context via RAG
+        doc_context = ""
+        if use_documents:
+            retrieved_chunks = rag_service.query(llm_user_prompt)
+            doc_context = rag_service.format_context(retrieved_chunks)
 
-        # 3. Get system prompt (use default if not specified)
+        # 4. System instructions
         default_prompt = prompt_service.get_prompt_by_name("default")
-        system_prompt = default_prompt["content"] if default_prompt else "You are a helpful AI assistant."
+        system_prompt = (
+            default_prompt["content"]
+            if default_prompt
+            else "You are a helpful AI assistant."
+        )
 
-        # 4. Build the full prompt
+        # 5. Build the full prompt
         full_prompt = _build_system_prompt(
             system_prompt=system_prompt,
             doc_context=doc_context,
             history=history_text,
-            user_prompt=user_prompt,
+            user_prompt=llm_user_prompt,
         )
 
-        # 5. Add user message to history
-        memory_service.add_message(session_id, "user", user_prompt)
+        # 6. Store the original user message in session memory
+        memory_service.add_message(session_id, "user", user_message)
 
-        # 6. Get response from LLM
+        # 7. Get response from LLM
         response_text = llm_service.chat(full_prompt, model)
 
-        # 7. Add assistant response to history
+        # 8. Add assistant response to history
         memory_service.add_message(session_id, "assistant", response_text)
 
         return ChatResponse(response=response_text, session_id=session_id)
@@ -166,26 +198,56 @@ def clear_session_history(
 async def upload_document(
     file: UploadFile = File(...),
     document_service: DocumentService = Depends(get_document_service),
+    rag_service: RAGService = Depends(get_rag_service),
 ) -> DocumentResponse:
-    """Upload and store a document (.txt files)."""
+    """Upload and index a document (.txt, .pdf, .docx)."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    extension = Path(file.filename).suffix.lower()
+    if extension not in SUPPORTED_EXTENSIONS:
+        supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        raise HTTPException(status_code=400, detail=f"Unsupported file type. Supported: {supported}")
+
+    temp_path: str | None = None
     try:
-        # Validate file type
-        if not file.filename.endswith(".txt"):
-            raise HTTPException(status_code=400, detail="Only .txt files are supported")
+        raw_content = await file.read()
 
-        # Read file content
-        content = await file.read()
-        text_content = content.decode("utf-8")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
+            temp_file.write(raw_content)
+            temp_path = temp_file.name
 
-        # Store document
+        print("[UPLOAD] filename:", file.filename)
+        print("[UPLOAD] file type detected:", extension)
+
+        text_content = extract_text(temp_path, file.filename)
+
+        print("[UPLOAD] extracted chars:", len(text_content))
+
         doc_id = document_service.store_document(text_content, source=file.filename)
+        try:
+            chunk_count = rag_service.add_document(
+                text_content,
+                {"doc_id": doc_id, "filename": file.filename},
+            )
+            print("[UPLOAD] rag chunks indexed:", chunk_count)
+        except OllamaServiceError:
+            document_service.delete_document(doc_id)
+            raise
 
         return DocumentResponse(id=doc_id, source=file.filename)
 
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail="File must be valid UTF-8 text")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OllamaServiceError as exc:
+        raise exc.to_http_exception() from exc
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error uploading document: {str(e)}")
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 @router.get("/documents", response_model=DocumentsListResponse)
@@ -202,9 +264,11 @@ def list_documents(
 def delete_document(
     doc_id: str,
     document_service: DocumentService = Depends(get_document_service),
+    rag_service: RAGService = Depends(get_rag_service),
 ) -> dict:
     """Delete a stored document."""
     if document_service.delete_document(doc_id):
+        rag_service.remove_document(doc_id)
         return {"message": f"Document {doc_id} deleted"}
     raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
 
@@ -212,9 +276,11 @@ def delete_document(
 @router.delete("/documents")
 def clear_all_documents(
     document_service: DocumentService = Depends(get_document_service),
+    rag_service: RAGService = Depends(get_rag_service),
 ) -> dict:
     """Clear all stored documents."""
     document_service.clear_all()
+    rag_service.clear()
     return {"message": "All documents cleared"}
 
 
@@ -232,7 +298,13 @@ def create_prompt(
     prompt_id = prompt_service.create_prompt(prompt_create.name, prompt_create.content)
     prompt = prompt_service.get_prompt(prompt_id)
     if prompt:
-        return PromptResponse(**prompt)
+        return PromptResponse(
+            id=prompt["id"],
+            name=prompt["name"],
+            content=prompt["content"],
+            created_at=prompt["created_at"],
+            updated_at=prompt["updated_at"],
+        )
     raise HTTPException(status_code=500, detail="Failed to create prompt")
 
 
@@ -242,7 +314,16 @@ def list_prompts(
 ) -> PromptListResponse:
     """List all prompt templates."""
     prompts = prompt_service.list_prompts()
-    prompt_responses = [PromptResponse(**p) for p in prompts]
+    prompt_responses = [
+        PromptResponse(
+            id=prompt["id"],
+            name=prompt["name"],
+            content=prompt["content"],
+            created_at=prompt["created_at"],
+            updated_at=prompt["updated_at"],
+        )
+        for prompt in prompts
+    ]
     return PromptListResponse(prompts=prompt_responses, count=len(prompt_responses))
 
 
@@ -254,7 +335,13 @@ def get_prompt(
     """Get a specific prompt template."""
     prompt = prompt_service.get_prompt(prompt_id)
     if prompt:
-        return PromptResponse(**prompt)
+        return PromptResponse(
+            id=prompt["id"],
+            name=prompt["name"],
+            content=prompt["content"],
+            created_at=prompt["created_at"],
+            updated_at=prompt["updated_at"],
+        )
     raise HTTPException(status_code=404, detail=f"Prompt {prompt_id} not found")
 
 
@@ -272,7 +359,13 @@ def update_prompt(
     ):
         prompt = prompt_service.get_prompt(prompt_id)
         if prompt:
-            return PromptResponse(**prompt)
+            return PromptResponse(
+                id=prompt["id"],
+                name=prompt["name"],
+                content=prompt["content"],
+                created_at=prompt["created_at"],
+                updated_at=prompt["updated_at"],
+            )
     raise HTTPException(status_code=404, detail=f"Prompt {prompt_id} not found")
 
 
@@ -298,25 +391,17 @@ def _build_system_prompt(
     history: str,
     user_prompt: str,
 ) -> str:
-    """Build the complete system prompt with context.
-
-    Args:
-        system_prompt: System-level instructions
-        doc_context: Retrieved document context
-        history: Chat history
-        user_prompt: Current user prompt
-
-    Returns:
-        Complete prompt to send to LLM
-    """
-    parts = [f"SYSTEM:\n{system_prompt}"]
+    """Build the complete prompt with RAG context, history, and user question."""
+    parts = [f"You are an AI assistant.\n{system_prompt}"]
 
     if doc_context:
-        parts.append(f"DOCUMENT CONTEXT:\n{doc_context}")
+        parts.append(
+            "Use the context below if relevant.\n\n"
+            f"CONTEXT:\n{doc_context}"
+        )
 
     if history:
         parts.append(f"CHAT HISTORY:\n{history}")
 
-    parts.append(f"USER:\n{user_prompt}")
-
+    parts.append(f"USER QUESTION:\n{user_prompt}")
     return "\n\n".join(parts)

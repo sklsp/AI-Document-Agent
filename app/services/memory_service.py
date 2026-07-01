@@ -18,6 +18,17 @@ class MemoryService:
     def __init__(self) -> None:
         # Structure: {session_id: [messages]}
         self._storage: dict[str, list[Message]] = {}
+        self._session_settings: dict[str, dict[str, bool]] = {}
+
+    def get_use_documents(self, session_id: str, default: bool = True) -> bool:
+        """Return whether RAG document retrieval is enabled for a session."""
+        return self._session_settings.get(session_id, {}).get("use_documents", default)
+
+    def set_use_documents(self, session_id: str, enabled: bool) -> None:
+        """Persist the RAG document toggle for a session."""
+        if session_id not in self._session_settings:
+            self._session_settings[session_id] = {}
+        self._session_settings[session_id]["use_documents"] = enabled
 
     def add_message(self, session_id: str, role: str, content: str) -> Message:
         """Add a message to session history.

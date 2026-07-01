@@ -1,1 +1,20 @@
+# Core API
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+python-multipart>=0.0.9
+
+# HTTP clients
 requests>=2.28.1
+
+# RAG — document parsing
+pypdf>=4.0.0
+python-docx>=1.1.0
+
+# RAG — vector search & embeddings
+numpy>=1.24.0
+faiss-cpu>=1.7.4
+sentence-transformers>=2.2.0
+
+# Launcher utilities
+pyperclip>=1.8.2

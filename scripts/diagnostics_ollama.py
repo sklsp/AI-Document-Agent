@@ -1,4 +1,8 @@
+#!/usr/bin/env python3
+"""Probe local Ollama connectivity and available HTTP endpoints."""
+
 import socket
+
 import requests
 
 hosts = [
@@ -30,14 +34,14 @@ def check_socket(hostname: str, port: int = 11434, timeout: float = 3.0):
 def try_requests(url: str, verify: bool):
     try:
         r = requests.post(url, json=payload, timeout=5, verify=verify)
-        return (r.status_code, r.headers.get('Content-Type'), r.text[:1000])
+        return (r.status_code, r.headers.get("Content-Type"), r.text[:1000])
     except Exception as e:
         return e
 
 
-def main():
+def main() -> None:
     print("Socket checks:")
-    ok, err = check_socket('localhost', 11434)
+    ok, err = check_socket("localhost", 11434)
     print(f" - localhost:11434 open? {ok}")
     if err:
         print(f"   socket error: {err}")
@@ -45,7 +49,7 @@ def main():
     print("\nHTTP probe (no TLS verification):")
     for host in hosts:
         for ep in endpoints:
-            url = host.rstrip('/') + ep
+            url = host.rstrip("/") + ep
             print(f"\nTrying POST {url} (verify=False)")
             res = try_requests(url, verify=False)
             print(" ->", type(res).__name__)
@@ -59,7 +63,7 @@ def main():
     print("\nHTTP probe (with TLS verification where applicable):")
     for host in hosts:
         for ep in endpoints:
-            url = host.rstrip('/') + ep
+            url = host.rstrip("/") + ep
             print(f"\nTrying POST {url} (verify=True)")
             res = try_requests(url, verify=True)
             print(" ->", type(res).__name__)
@@ -70,8 +74,8 @@ def main():
             else:
                 print(f"    exception: {res}")
 
-    print('\nDone.')
+    print("\nDone.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

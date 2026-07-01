@@ -215,6 +215,86 @@
             font-weight: 600;
         }
 
+        .chat-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #b0b0b0;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .toggle-label input {
+            width: 16px;
+            height: 16px;
+            accent-color: #4a9eff;
+        }
+
+        .prompt-select {
+            min-width: 180px;
+            padding: 8px 10px;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            background: #0d0d0d;
+            color: #ececec;
+            font-size: 13px;
+        }
+
+        .prompt-form {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .prompt-form input,
+        .prompt-form textarea {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            background: #0d0d0d;
+            color: #ececec;
+            font-size: 13px;
+            font-family: inherit;
+        }
+
+        .prompt-form textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .prompt-save-btn,
+        .prompt-action-btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 8px;
+            background: #4a9eff;
+            color: white;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .prompt-action-btn {
+            background: transparent;
+            color: #b0b0b0;
+            border: 1px solid #2a2a2a;
+            padding: 4px 8px;
+        }
+
+        .prompt-list-item-actions {
+            display: flex;
+            gap: 6px;
+        }
+
         .clear-btn {
             padding: 8px 16px;
             background: #333;
@@ -713,7 +793,16 @@
         <main class="chat-area">
             <div class="chat-header">
                 <div class="chat-header-title">Chat</div>
-                <button class="clear-btn">Clear Chat</button>
+                <div class="chat-controls">
+                    <label class="toggle-label" title="Include uploaded documents in responses">
+                        <input type="checkbox" class="use-documents-toggle" checked />
+                        Use Documents
+                    </label>
+                    <select class="prompt-select" title="Apply a saved prompt template">
+                        <option value="">No prompt template</option>
+                    </select>
+                    <button class="clear-btn">Clear Chat</button>
+                </div>
             </div>
             <div class="messages-container"></div>
             <div class="input-area">
@@ -736,19 +825,39 @@
                     <div class="upload-text">Drag files here</div>
                     <div class="upload-hint">or click to browse</div>
                 </div>
-                <input type="file" class="file-input" accept=".txt,.pdf,.md,.csv" />
+                <input type="file" class="file-input" accept=".txt,.pdf,.docx" />
                 <div class="documents-section"></div>
             </div>
 
             <!-- Prompt Library -->
             <div class="panel-section">
-                <div class="section-title">⚡ Prompt Library</div>
+                <div class="section-title">Prompt Library</div>
+                <div class="prompt-form">
+                    <input type="text" class="prompt-name-input" placeholder="Prompt name" />
+                    <textarea class="prompt-content-input" placeholder="Template content. Use {input} for the user message."></textarea>
+                    <button class="prompt-save-btn" type="button">Save Prompt</button>
+                </div>
                 <div class="prompts-section"></div>
             </div>
         </aside>
     </div>
 
     <script>
+        // ============ API BASE URL ============
+        // Same-origin when served by FastAPI (localhost, LAN, or Cloudflare tunnel).
+        // Override via ?api_base=... query param or localStorage.API_BASE.
+        function resolveApiBase() {
+            const params = new URLSearchParams(window.location.search);
+            const override = params.get("api_base") || localStorage.getItem("API_BASE");
+            if (override) {
+                return override.replace(/\/$/, "");
+            }
+            if (window.location.protocol.startsWith("http")) {
+                return window.location.origin;
+            }
+            return "http://localhost:8000";
+        }
+
         // ============ STATE MANAGEMENT ============
         const state = {
             sessions: {},
@@ -757,7 +866,7 @@
             prompts: [],
             selectedDocumentId: null,
             isLoading: false,
-            API_BASE: "http://192.168.178.69:8000"
+            API_BASE: resolveApiBase()
         };
 
         // Initialize state with default session
@@ -765,7 +874,9 @@
             id: "default",
             name: "New Chat",
             messages: [],
-            createdAt: new Date().toLocaleString()
+            createdAt: new Date().toLocaleString(),
+            useDocuments: true,
+            selectedPromptId: null
         };
 
         // ============ DOM ELEMENTS ============
@@ -781,7 +892,12 @@
             fileInput: document.querySelector(".file-input"),
             docListContainer: document.querySelector(".documents-section"),
             promptListContainer: document.querySelector(".prompts-section"),
-            newChatBtn: document.querySelector(".new-chat-btn")
+            newChatBtn: document.querySelector(".new-chat-btn"),
+            useDocumentsToggle: document.querySelector(".use-documents-toggle"),
+            promptSelect: document.querySelector(".prompt-select"),
+            promptNameInput: document.querySelector(".prompt-name-input"),
+            promptContentInput: document.querySelector(".prompt-content-input"),
+            promptSaveBtn: document.querySelector(".prompt-save-btn")
         };
 
         // ============ INITIALIZATION ============
@@ -793,6 +909,7 @@
             await loadPrompts();
             renderDocuments();
             renderPrompts();
+            syncChatControls();
         }
 
         function setupEventListeners() {
@@ -811,6 +928,24 @@
 
             // New chat
             DOM.newChatBtn.addEventListener("click", createNewSession);
+
+            // RAG toggle (per session)
+            DOM.useDocumentsToggle.addEventListener("change", () => {
+                const session = state.sessions[state.currentSessionId];
+                if (session) {
+                    session.useDocuments = DOM.useDocumentsToggle.checked;
+                }
+            });
+
+            // Prompt template selector (per session)
+            DOM.promptSelect.addEventListener("change", () => {
+                const session = state.sessions[state.currentSessionId];
+                if (session) {
+                    session.selectedPromptId = DOM.promptSelect.value || null;
+                }
+            });
+
+            DOM.promptSaveBtn.addEventListener("click", savePrompt);
 
             // Document upload
             DOM.uploadZone.addEventListener("click", () => DOM.fileInput.click());
@@ -870,7 +1005,9 @@
                 id,
                 name,
                 messages: [],
-                createdAt: new Date().toLocaleString()
+                createdAt: new Date().toLocaleString(),
+                useDocuments: true,
+                selectedPromptId: null
             };
             switchSession(id);
         }
@@ -879,7 +1016,20 @@
             state.currentSessionId = sessionId;
             state.selectedDocumentId = null;
             renderSessions();
+            syncChatControls();
             renderCurrentSession();
+        }
+
+        function getCurrentSession() {
+            return state.sessions[state.currentSessionId];
+        }
+
+        function syncChatControls() {
+            const session = getCurrentSession();
+            if (!session) return;
+
+            DOM.useDocumentsToggle.checked = session.useDocuments !== false;
+            DOM.promptSelect.value = session.selectedPromptId || "";
         }
 
         function deleteSession(sessionId) {
@@ -991,25 +1141,22 @@
             showTypingIndicator();
 
             try {
-                // Prepare context
-                let documentContext = "";
-                if (state.selectedDocumentId) {
-                    const doc = state.documents.find(d => d.id === state.selectedDocumentId);
-                    if (doc) {
-                        documentContext = `\n\nRELEVANT DOCUMENT:\n${doc.preview}`;
-                    }
-                }
+                const session = getCurrentSession();
+                const requestBody = {
+                    prompt: message,
+                    session_id: state.currentSessionId,
+                    model: "llama3.2",
+                    use_documents: session.useDocuments !== false
+                };
 
-                const fullPrompt = message + documentContext;
+                if (session.selectedPromptId) {
+                    requestBody.prompt_id = session.selectedPromptId;
+                }
 
                 const response = await fetch(`${state.API_BASE}/chat`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        prompt: fullPrompt,
-                        session_id: state.currentSessionId,
-                        model: "llama3.2"
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 if (!response.ok) throw new Error(`API error: ${response.status}`);
@@ -1123,9 +1270,17 @@
             }
         }
 
+        const SUPPORTED_UPLOAD_EXTENSIONS = [".txt", ".pdf", ".docx"];
+
+        function getFileExtension(filename) {
+            const dot = filename.lastIndexOf(".");
+            return dot >= 0 ? filename.slice(dot).toLowerCase() : "";
+        }
+
         async function uploadFile(file) {
-            if (!file.name.endsWith(".txt")) {
-                showError("Only .txt files supported");
+            const extension = getFileExtension(file.name);
+            if (!SUPPORTED_UPLOAD_EXTENSIONS.includes(extension)) {
+                showError("Supported files: .txt, .pdf, .docx");
                 return;
             }
 
@@ -1139,19 +1294,25 @@
                     body: formData
                 });
 
-                if (!response.ok) throw new Error("Upload failed");
+                if (!response.ok) {
+                    const errorBody = await response.json().catch(() => ({}));
+                    throw new Error(errorBody.detail || "Upload failed");
+                }
                 const data = await response.json();
-                
-                // Add to state
+
+                let preview = `${extension.toUpperCase()} document indexed`;
+                if (extension === ".txt") {
+                    preview = (await file.text()).substring(0, 500);
+                }
+
                 const newDoc = {
                     id: data.id,
                     source: file.name,
-                    preview: (await file.text()).substring(0, 500)
+                    preview
                 };
                 state.documents.push(newDoc);
                 renderDocuments();
 
-                // Auto-select the uploaded document
                 selectDocument(data.id);
 
             } catch (error) {
@@ -1176,33 +1337,136 @@
         }
 
         function renderPrompts() {
-            // Sidebar
+            // Sidebar quick picks
             DOM.promptsList.innerHTML = "";
             state.prompts.slice(0, 3).forEach(prompt => {
                 const div = document.createElement("div");
                 div.className = "prompt-item";
                 div.textContent = prompt.name;
-                div.addEventListener("click", () => insertPrompt(prompt));
+                div.addEventListener("click", () => selectPromptTemplate(prompt.id));
                 DOM.promptsList.appendChild(div);
             });
 
-            // Right panel
+            // Dropdown in chat header
+            const currentSelection = getCurrentSession()?.selectedPromptId || "";
+            DOM.promptSelect.innerHTML = `<option value="">No prompt template</option>`;
+            state.prompts.forEach(prompt => {
+                const option = document.createElement("option");
+                option.value = prompt.id;
+                option.textContent = prompt.name;
+                if (prompt.id === currentSelection) {
+                    option.selected = true;
+                }
+                DOM.promptSelect.appendChild(option);
+            });
+
+            // Right panel library
             DOM.promptListContainer.innerHTML = "";
             state.prompts.forEach(prompt => {
                 const div = document.createElement("div");
                 div.className = "prompt-list-item";
+                const preview = prompt.content.length > 100
+                    ? `${prompt.content.substring(0, 100)}...`
+                    : prompt.content;
                 div.innerHTML = `
                     <div class="prompt-list-item-name">${escapeHtml(prompt.name)}</div>
-                    <div class="prompt-list-item-content">${escapeHtml(prompt.content.substring(0, 100))}...</div>
+                    <div class="prompt-list-item-content">${escapeHtml(preview)}</div>
+                    <div class="prompt-list-item-actions">
+                        <button class="prompt-action-btn" data-action="use">Use</button>
+                        <button class="prompt-action-btn" data-action="edit">Edit</button>
+                        <button class="prompt-action-btn" data-action="delete">Delete</button>
+                    </div>
                 `;
-                div.addEventListener("click", () => insertPrompt(prompt));
+
+                div.querySelector('[data-action="use"]').addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    selectPromptTemplate(prompt.id);
+                });
+                div.querySelector('[data-action="edit"]').addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    editPrompt(prompt);
+                });
+                div.querySelector('[data-action="delete"]').addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    deletePrompt(prompt.id);
+                });
+
                 DOM.promptListContainer.appendChild(div);
             });
         }
 
+        function selectPromptTemplate(promptId) {
+            const session = getCurrentSession();
+            if (!session) return;
+            session.selectedPromptId = promptId;
+            DOM.promptSelect.value = promptId;
+        }
+
+        async function savePrompt() {
+            const name = DOM.promptNameInput.value.trim();
+            const content = DOM.promptContentInput.value.trim();
+            const editId = DOM.promptContentInput.dataset.editId;
+            if (!name || !content) {
+                showError("Prompt name and content are required");
+                return;
+            }
+
+            try {
+                const response = await fetch(
+                    editId ? `${state.API_BASE}/prompts/${editId}` : `${state.API_BASE}/prompts`,
+                    {
+                        method: editId ? "PUT" : "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ name, content })
+                    }
+                );
+                if (!response.ok) {
+                    const errorBody = await response.json().catch(() => ({}));
+                    throw new Error(errorBody.detail || "Failed to save prompt");
+                }
+
+                DOM.promptNameInput.value = "";
+                DOM.promptContentInput.value = "";
+                delete DOM.promptContentInput.dataset.editId;
+                DOM.promptSaveBtn.textContent = "Save Prompt";
+                await loadPrompts();
+                renderPrompts();
+            } catch (error) {
+                showError(`Save prompt failed: ${error.message}`);
+            }
+        }
+
+        function editPrompt(prompt) {
+            DOM.promptNameInput.value = prompt.name;
+            DOM.promptContentInput.value = prompt.content;
+            DOM.promptContentInput.dataset.editId = prompt.id;
+            DOM.promptSaveBtn.textContent = "Update Prompt";
+        }
+
+        async function deletePrompt(promptId) {
+            if (!confirm("Delete this prompt?")) return;
+
+            try {
+                const response = await fetch(`${state.API_BASE}/prompts/${promptId}`, {
+                    method: "DELETE"
+                });
+                if (!response.ok) throw new Error("Failed to delete prompt");
+
+                const session = getCurrentSession();
+                if (session?.selectedPromptId === promptId) {
+                    session.selectedPromptId = null;
+                }
+
+                await loadPrompts();
+                renderPrompts();
+                syncChatControls();
+            } catch (error) {
+                showError(`Delete prompt failed: ${error.message}`);
+            }
+        }
+
         function insertPrompt(prompt) {
-            DOM.chatInput.value = prompt.content;
-            autoResizeTextarea();
+            selectPromptTemplate(prompt.id);
             DOM.chatInput.focus();
         }
 

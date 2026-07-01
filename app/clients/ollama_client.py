@@ -68,3 +68,28 @@ class OllamaClient:
     def list_models(self) -> dict:
         """List available models using OpenAI-compatible endpoint."""
         return self._request("GET", "/v1/models")
+
+    def embed(self, *, model: str, inputs: list[str]) -> list[list[float]]:
+        """Generate embeddings via Ollama's /api/embed endpoint."""
+        payload = self._request(
+            "POST",
+            "/api/embed",
+            json={"model": model, "input": inputs},
+        )
+
+        embeddings = payload.get("embeddings")
+        if isinstance(embeddings, list) and len(embeddings) == len(inputs):
+            return embeddings
+
+        # Legacy fallback for older Ollama versions (single prompt per request).
+        if len(inputs) == 1:
+            legacy = self._request(
+                "POST",
+                "/api/embeddings",
+                json={"model": model, "prompt": inputs[0]},
+            )
+            vector = legacy.get("embedding")
+            if isinstance(vector, list):
+                return [vector]
+
+        raise OllamaServiceError("Ollama returned an invalid embedding response", status_code=502)

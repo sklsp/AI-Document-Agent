@@ -9,6 +9,18 @@ from app.services.document_service import DocumentService
 from app.services.llm_service import LLMService
 from app.services.memory_service import MemoryService
 from app.services.prompt_service import PromptService
+from app.services.rag.service import RAGService
+
+
+def _iter_api_routes(routes):
+    """Yield API routes, including those nested in included routers (FastAPI 0.138+)."""
+    for route in routes:
+        if type(route).__name__ == "_IncludedRouter":
+            yield from _iter_api_routes(route.original_router.routes)
+        elif hasattr(route, "routes"):
+            yield from _iter_api_routes(route.routes)
+        elif hasattr(route, "path") and hasattr(route, "methods"):
+            yield route
 
 
 def create_app() -> FastAPI:
@@ -37,6 +49,7 @@ def create_app() -> FastAPI:
     app.state.memory_service = MemoryService()
     app.state.document_service = DocumentService()
     app.state.prompt_service = PromptService()
+    app.state.rag_service = RAGService()
 
     # ============ INCLUDE API ROUTES ============
     app.include_router(router)
@@ -54,14 +67,14 @@ def create_app() -> FastAPI:
     async def log_routes():
         """Log all registered routes on startup for debugging."""
         print("\n" + "=" * 70)
-        print("🚀 AI WORKSPACE API STARTED")
+        print("AI WORKSPACE API STARTED")
         print("=" * 70)
-        print("\n📋 REGISTERED ENDPOINTS:")
+        print("\nREGISTERED ENDPOINTS:")
         print("-" * 70)
         
-        # Collect all routes
+        # Collect all routes (including nested included routers)
         routes = {}
-        for route in app.routes:
+        for route in _iter_api_routes(app.routes):
             if hasattr(route, "path") and hasattr(route, "methods"):
                 path = route.path
                 methods = ", ".join(sorted(route.methods - {"HEAD", "OPTIONS"}))
@@ -76,28 +89,28 @@ def create_app() -> FastAPI:
                 print(f"  {methods:10} {path}")
         
         print("-" * 70)
-        print("\n✅ CRITICAL ROUTES:")
-        print(f"  POST    /chat              ← Frontend calls this")
-        print(f"  POST    /documents/upload  ← File uploads")
-        print(f"  GET     /prompts           ← Load prompt templates")
-        print(f"  GET     /documents         ← Load documents")
-        print(f"  GET     /health            ← Health check")
+        print("\nCRITICAL ROUTES:")
+        print("  POST    /chat              <- Frontend calls this")
+        print("  POST    /documents/upload  <- File uploads")
+        print("  GET     /prompts           <- Load prompt templates")
+        print("  GET     /documents         <- Load documents")
+        print("  GET     /health            <- Health check")
         print("-" * 70)
         
         # Verify /chat endpoint exists
         chat_route_found = any(
-            hasattr(r, "path") and r.path == "/chat" and "POST" in getattr(r, "methods", set())
-            for r in app.routes
+            r.path == "/chat" and "POST" in r.methods
+            for r in _iter_api_routes(app.routes)
         )
         
         if chat_route_found:
-            print("\n✓ /chat endpoint is REGISTERED")
+            print("\n[OK] /chat endpoint is REGISTERED")
         else:
-            print("\n✗ WARNING: /chat endpoint NOT FOUND!")
+            print("\n[WARN] /chat endpoint NOT FOUND!")
         
-        print("\n🌐 Frontend should call:")
-        print("   POST http://192.168.178.69:8000/chat")
-        print("   with JSON: {\"prompt\": \"...\", \"session_id\": \"...\", \"model\": \"...\"}")
+        print("\nFrontend API base:")
+        print("   Same origin as this server (localhost, LAN, or Cloudflare tunnel)")
+        print("   POST /chat with JSON: {\"prompt\": \"...\", \"session_id\": \"...\", \"model\": \"...\"}")
         print("\n" + "=" * 70 + "\n")
 
     return app
